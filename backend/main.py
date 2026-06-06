@@ -141,6 +141,20 @@ class Feature(BaseModel):
     description: str | None = None
 
 
+
+class Feature1Request(BaseModel):
+    alpha:     float
+    beta:      float
+    sigma_sqr: float
+    mu_0:      float
+    mu_1:      float
+    test_type: int   # 1 or 2
+
+
+class Feature1Response(BaseModel):
+    inputs: Feature1Request
+    result: float
+
 class FeaturesResponse(BaseModel):
     features: list[Feature]
 
@@ -213,3 +227,24 @@ async def get_features(
     """
     # Future: filter FEATURES by current_user["sub"] from your DB
     return FeaturesResponse(features=FEATURES)
+
+@app.post(
+    "/feature1",
+    response_model=Feature1Response,
+    tags=["features"],
+    summary="Feature 1 calculation — requires valid Bearer token",
+)
+async def feature1(
+    body: Feature1Request,
+    current_user: Annotated[dict, Depends(verified_user)],
+) -> Feature1Response:
+    """
+    Accepts the Feature 1 form inputs, validates authentication,
+    and returns the inputs echoed back alongside the computed result.
+
+    Prototype: result is hardcoded to 3.0.
+    Replace with real calculation logic when ready.
+    """
+    result = 3.0   # TODO: replace with real computation
+
+    return Feature1Response(inputs=body, result=result)

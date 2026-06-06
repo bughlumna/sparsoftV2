@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import Navbar from '../components/Navbar';
+import Feature1Form from '../components/Feature1Form';
 
 const css = `
   @keyframes dashReveal {
@@ -142,6 +143,7 @@ export default function Dashboard({ user, token, onLogout }) {
   const [features, setFeatures] = useState([]);
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState(null);
+  const [activeFeature, setActiveFeature] = useState(null);
 
   // fetchFeatures must be defined before useEffect so the closure
   // captures the real `token` value, not undefined.
@@ -199,7 +201,7 @@ export default function Dashboard({ user, token, onLogout }) {
                 key={feat.id}
                 className="feature-btn"
                 style={{ animation: `featureReveal 0.5s ${i * 0.08}s cubic-bezier(0.16,1,0.3,1) both` }}
-                onClick={() => console.log('Clicked:', feat.name)}
+                onClick={() => setActiveFeature(feat.id)}
               >
                 <span className="feature-icon">{ICONS[i % ICONS.length]}</span>
                 <span className="feature-name">{feat.name}</span>
@@ -211,6 +213,9 @@ export default function Dashboard({ user, token, onLogout }) {
           </div>
         </main>
       </div>
+      {activeFeature === 'feature_1' && (
+        <Feature1Form token={token} onClose={() => setActiveFeature(null)} />
+      )}
     </>
   );
 }

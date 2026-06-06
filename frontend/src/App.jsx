@@ -3,18 +3,22 @@ import LandingPage from './pages/LandingPage';
 import Dashboard   from './pages/Dashboard';
 
 export default function App() {
-  const [user, setUser] = useState(null);
+  const [user,  setUser]  = useState(null);
+  const [token, setToken] = useState(null); // Google ID token — sent on every auth'd request
 
-  const handleLoginSuccess = useCallback((userData) => setUser(userData), []);
+  const handleLoginSuccess = useCallback((userData, idToken) => {
+    setUser(userData);
+    setToken(idToken);
+  }, []);
 
-  // Clear user → return to landing page (splash skipped, goes straight to login)
   const handleLogout = useCallback(() => {
     setUser(null);
+    setToken(null);
     window.history.pushState({}, '', '/');
   }, []);
 
   if (user) {
-    return <Dashboard user={user} onLogout={handleLogout} />;
+    return <Dashboard user={user} token={token} onLogout={handleLogout} />;
   }
 
   return <LandingPage onLoginSuccess={handleLoginSuccess} />;

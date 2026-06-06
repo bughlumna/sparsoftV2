@@ -153,7 +153,9 @@ export default function LoginPanel({ onLoginSuccess }) {
         throw new Error(err.detail || 'Authentication failed');
       }
       const data = await res.json();
-      onLoginSuccess(data.user);
+      // Pass user profile + raw Google ID token so authenticated
+      // API calls can send it as a Bearer token.
+      onLoginSuccess(data.user, credentialResponse.credential);
     } catch (err) {
       setError(err.message || 'Login failed. Please try again.');
     } finally {

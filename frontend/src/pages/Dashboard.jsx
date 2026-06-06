@@ -1,157 +1,215 @@
-import React, { useEffect } from 'react';
-import { googleLogout } from '@react-oauth/google';
+import React, { useEffect, useState } from 'react';
+import Navbar from '../components/Navbar';
 
-const keyframes = `
+const css = `
   @keyframes dashReveal {
-    from { opacity:0; transform:translateY(20px); }
+    from { opacity:0; transform:translateY(16px); }
     to   { opacity:1; transform:translateY(0); }
   }
-  @keyframes avatarGlow {
-    0%,100% { box-shadow: 0 0 0 2px rgba(0,229,255,0.3), 0 0 20px rgba(0,229,255,0.15); }
-    50%      { box-shadow: 0 0 0 3px rgba(0,229,255,0.6), 0 0 35px rgba(0,229,255,0.3); }
+  @keyframes featureReveal {
+    from { opacity:0; transform:translateY(20px) scale(0.96); }
+    to   { opacity:1; transform:translateY(0) scale(1); }
   }
-  .logout-btn {
-    background: transparent;
-    border: 1px solid rgba(255,80,80,0.3);
-    color: rgba(255,140,140,0.7);
+  @keyframes shimmer {
+    from { background-position: -400px 0; }
+    to   { background-position: 400px 0; }
+  }
+
+  .dash-page {
+    min-height: 100vh; width: 100vw;
+    background: linear-gradient(170deg, #020d1a 0%, #041428 55%, #060820 100%);
     font-family: 'Rajdhani', sans-serif;
-    font-size: 0.72rem;
-    font-weight: 600;
-    letter-spacing: 0.3em;
-    text-transform: uppercase;
-    padding: 8px 24px;
-    clip-path: polygon(10px 0%, 100% 0%, calc(100% - 10px) 100%, 0% 100%);
-    cursor: pointer;
-    transition: all 0.25s ease;
-    margin-top: 0.4rem;
+    display: flex; flex-direction: column;
   }
-  .logout-btn:hover {
-    background: rgba(255,60,60,0.1);
-    border-color: rgba(255,80,80,0.7);
-    color: rgba(255,180,180,0.95);
-    box-shadow: 0 0 18px rgba(255,60,60,0.2);
+
+  /* ── Main content area (below navbar) ── */
+  .dash-main {
+    flex: 1;
+    padding-top: 60px; /* navbar height */
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 0;
+    animation: dashReveal 0.6s ease both;
+  }
+
+  /* ── Section header ── */
+  .dash-section-label {
+    font-size: 0.65rem; font-weight: 600;
+    letter-spacing: 0.4em; text-transform: uppercase;
+    color: rgba(0,229,255,0.35);
+    margin-bottom: 1.6rem;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .dash-section-label::before,
+  .dash-section-label::after {
+    content: ''; flex: 1 0 40px; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(0,229,255,0.2));
+  }
+  .dash-section-label::after {
+    background: linear-gradient(90deg, rgba(0,229,255,0.2), transparent);
+  }
+
+  /* ── Feature grid ── */
+  .feature-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 18px;
+    width: min(540px, 90vw);
+  }
+
+  /* ── Feature button ── */
+  .feature-btn {
+    position: relative; overflow: hidden;
+    background: linear-gradient(145deg, rgba(0,20,50,0.7) 0%, rgba(8,4,28,0.75) 100%);
+    border: 1px solid rgba(0,229,255,0.18);
+    border-radius: 3px;
+    padding: 28px 20px;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 10px;
+    cursor: pointer; color: #fff;
+    transition: border-color 0.25s, box-shadow 0.25s, transform 0.2s;
+    clip-path: polygon(14px 0%, 100% 0%, calc(100% - 14px) 100%, 0% 100%);
+    text-align: center;
+  }
+  .feature-btn::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(135deg, rgba(0,229,255,0.07), rgba(124,58,237,0.05));
+    opacity: 0; transition: opacity 0.25s;
+  }
+  .feature-btn:hover {
+    border-color: rgba(0,229,255,0.55);
+    box-shadow: 0 0 28px rgba(0,229,255,0.18), inset 0 0 20px rgba(0,229,255,0.04);
+    transform: translateY(-2px);
+  }
+  .feature-btn:hover::before { opacity: 1; }
+  .feature-btn:active { transform: translateY(0) scale(0.98); }
+
+  /* Shimmer sweep on hover */
+  .feature-btn::after {
+    content: '';
+    position: absolute; top: 0; left: -100%; width: 60%; height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.07), transparent);
+    transition: left 0.45s ease;
+  }
+  .feature-btn:hover::after { left: 150%; }
+
+  .feature-icon {
+    font-size: 1.6rem; line-height: 1;
+    filter: drop-shadow(0 0 8px rgba(0,229,255,0.5));
+  }
+  .feature-name {
+    font-family: 'Orbitron', monospace;
+    font-size: 0.7rem; font-weight: 700;
+    letter-spacing: 0.12em; text-transform: uppercase;
+    color: rgba(255,255,255,0.85);
+    position: relative; z-index: 1;
+  }
+  .feature-sub {
+    font-size: 0.68rem; letter-spacing: 0.06em;
+    color: rgba(160,210,255,0.4);
+    position: relative; z-index: 1;
+  }
+
+  /* Loading skeleton */
+  .feature-skeleton {
+    background: linear-gradient(90deg,
+      rgba(0,229,255,0.04) 25%,
+      rgba(0,229,255,0.09) 50%,
+      rgba(0,229,255,0.04) 75%
+    );
+    background-size: 400px 100%;
+    border: 1px solid rgba(0,229,255,0.08);
+    border-radius: 3px;
+    height: 110px;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+
+  /* Error state */
+  .dash-error {
+    color: rgba(255,140,140,0.7);
+    font-size: 0.78rem; letter-spacing: 0.1em;
+    border: 1px solid rgba(255,80,80,0.2);
+    padding: 12px 24px; border-radius: 3px;
+    background: rgba(255,40,40,0.05);
   }
 `;
 
-const styles = {
-  page: {
-    minHeight: '100vh', width: '100vw',
-    background: 'linear-gradient(170deg, #020d1a 0%, #041428 50%, #060820 100%)',
-    display: 'flex', flexDirection: 'column',
-    alignItems: 'center', justifyContent: 'center',
-    fontFamily: "'Rajdhani', sans-serif",
-    animation: 'dashReveal 0.7s ease both',
-  },
-  card: {
-    background: 'linear-gradient(145deg, rgba(0,20,45,0.8) 0%, rgba(10,5,30,0.85) 100%)',
-    border: '1px solid rgba(0,229,255,0.2)',
-    borderRadius: 4,
-    padding: '3rem 4rem',
-    display: 'flex', flexDirection: 'column',
-    alignItems: 'center', gap: '1.4rem',
-    backdropFilter: 'blur(16px)',
-    minWidth: 360,
-  },
-  logo: {
-    fontFamily: "'Orbitron', monospace",
-    fontSize: '1.3rem', fontWeight: 900,
-    background: 'linear-gradient(135deg, #fff 0%, #a8e6ff 40%, #00e5ff 100%)',
-    WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
-    backgroundClip: 'text',
-    letterSpacing: '0.1em',
-    filter: 'drop-shadow(0 0 10px rgba(0,229,255,0.35))',
-  },
-  avatar: {
-    width: 72, height: 72, borderRadius: '50%',
-    objectFit: 'cover',
-    animation: 'avatarGlow 3s ease-in-out infinite',
-  },
-  avatarFallback: {
-    width: 72, height: 72, borderRadius: '50%',
-    background: 'linear-gradient(135deg, #1565c0, #7c3aed)',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    fontSize: '1.8rem', fontWeight: 700, color: '#fff',
-    animation: 'avatarGlow 3s ease-in-out infinite',
-  },
-  greeting: {
-    fontFamily: "'Orbitron', monospace",
-    fontSize: '1rem', fontWeight: 700,
-    letterSpacing: '0.08em', textTransform: 'uppercase',
-    color: '#fff',
-  },
-  email: {
-    fontSize: '0.8rem', letterSpacing: '0.08em',
-    color: 'rgba(160,210,255,0.5)',
-    marginTop: '-0.6rem',
-  },
-  statusRow: {
-    display: 'flex', alignItems: 'center', gap: 8,
-    background: 'rgba(0,229,255,0.06)',
-    border: '1px solid rgba(0,229,255,0.15)',
-    borderRadius: 100, padding: '5px 16px',
-  },
-  statusDot: {
-    width: 6, height: 6, borderRadius: '50%',
-    background: '#00e5ff', boxShadow: '0 0 8px #00e5ff',
-  },
-  statusText: {
-    fontSize: '0.7rem', letterSpacing: '0.25em',
-    textTransform: 'uppercase', color: 'rgba(0,229,255,0.6)',
-  },
-  message: {
-    fontSize: '0.82rem', letterSpacing: '0.08em',
-    color: 'rgba(160,210,255,0.45)',
-    textAlign: 'center', maxWidth: 280,
-    lineHeight: 1.7,
-  },
-  divider: {
-    width: '100%', height: 1,
-    background: 'linear-gradient(90deg, transparent, rgba(255,80,80,0.15), transparent)',
-    marginTop: '0.4rem',
-  },
-};
+// Icon pool — cycles through these for each feature button
+const ICONS = ['◈', '⬡', '◎', '⟁', '⬟', '◇', '⊕', '⋈'];
 
-export default function Dashboard({ user, onLogout }) {
+export default function Dashboard({ user, token, onLogout }) {
+  const [features, setFeatures] = useState([]);
+  const [loading,  setLoading]  = useState(true);
+  const [error,    setError]    = useState(null);
+
+  // fetchFeatures must be defined before useEffect so the closure
+  // captures the real `token` value, not undefined.
+  const fetchFeatures = async (idToken) => {
+    if (!idToken) {
+      setError('No auth token available — please log in again.');
+      setLoading(false);
+      return;
+    }
+    setLoading(true); setError(null);
+    try {
+      const res = await fetch('http://localhost:8000/features', {
+        headers: { Authorization: 'Bearer ' + idToken },
+      });
+      if (res.status === 401) throw new Error('Session expired — please log in again.');
+      if (!res.ok) throw new Error('Server error ' + res.status);
+      const data = await res.json();
+      setFeatures(data.features);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     window.history.pushState({}, '', '/index.html');
-  }, []);
-
-  const handleLogout = () => {
-    googleLogout();   // clears Google's session cookie
-    onLogout();       // resets App state → back to landing page
-  };
+    fetchFeatures(token);       // pass token directly — no stale closure
+  }, [token]);                  // re-fetch if token ever rotates
 
   return (
     <>
-      <style>{keyframes}</style>
-      <div style={styles.page}>
-        <div style={styles.card}>
-          <div style={styles.logo}>NQWEST</div>
+      <style>{css}</style>
 
-          {user.picture
-            ? <img src={user.picture} alt={user.name} style={styles.avatar} />
-            : <div style={styles.avatarFallback}>{user.name?.[0] ?? '?'}</div>
-          }
+      <div className="dash-page">
+        <Navbar user={user} onLogout={onLogout} />
 
-          <div style={styles.greeting}>Welcome, {user.name}</div>
-          <div style={styles.email}>{user.email}</div>
+        <main className="dash-main">
+          <div className="dash-section-label">Select a Feature</div>
 
-          <div style={styles.statusRow}>
-            <div style={styles.statusDot} />
-            <span style={styles.statusText}>Authenticated · Session Active</span>
+          <div className="feature-grid">
+            {loading && Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="feature-skeleton"
+                style={{ animationDelay: `${i * 0.1}s` }} />
+            ))}
+
+            {error && (
+              <div className="dash-error" style={{ gridColumn: '1 / -1' }}>
+                ⚠ Could not load features: {error}
+              </div>
+            )}
+
+            {!loading && !error && features.map((feat, i) => (
+              <button
+                key={feat.id}
+                className="feature-btn"
+                style={{ animation: `featureReveal 0.5s ${i * 0.08}s cubic-bezier(0.16,1,0.3,1) both` }}
+                onClick={() => console.log('Clicked:', feat.name)}
+              >
+                <span className="feature-icon">{ICONS[i % ICONS.length]}</span>
+                <span className="feature-name">{feat.name}</span>
+                {feat.description && (
+                  <span className="feature-sub">{feat.description}</span>
+                )}
+              </button>
+            ))}
           </div>
-
-          <p style={styles.message}>
-            You are now connected to the Nqwest platform.
-            Your dashboard is loading…
-          </p>
-
-          <div style={styles.divider} />
-
-          <button className="logout-btn" onClick={handleLogout}>
-            ⏻ &nbsp;Sign Out
-          </button>
-        </div>
+        </main>
       </div>
     </>
   );

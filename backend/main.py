@@ -31,6 +31,9 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 from pydantic import BaseModel
 
+from utilities.calculate_type1 import calculateType1
+from utilities.calculate_type2 import calculateType2
+
 # ─────────────────────────────────────────────
 #  Config
 # ─────────────────────────────────────────────
@@ -242,9 +245,24 @@ async def feature1(
     Accepts the Feature 1 form inputs, validates authentication,
     and returns the inputs echoed back alongside the computed result.
 
-    Prototype: result is hardcoded to 3.0.
-    Replace with real calculation logic when ready.
+    Dispatches to calculateType1 or calculateType2 based on test_type.
     """
-    result = 3.0   # TODO: replace with real computation
+    kwargs = dict(
+        alpha=body.alpha,
+        beta=body.beta,
+        sigma_sqr=body.sigma_sqr,
+        mu_0=body.mu_0,
+        mu_1=body.mu_1,
+    )
+
+    if body.test_type == 1:
+        result = calculateType1(**kwargs)
+    elif body.test_type == 2:
+        result = calculateType2(**kwargs)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"test_type must be 1 or 2, got {body.test_type}",
+        )
 
     return Feature1Response(inputs=body, result=result)

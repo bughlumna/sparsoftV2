@@ -4,6 +4,7 @@
 
 [build]
 builder = "nixpacks"
+buildCommand     = "pip install -r requirements.txt"
 
 # ── Backend service ───────────────────────────────────────────────────────────
 # In Railway dashboard: New Service → GitHub Repo → set Root Directory = backend
@@ -11,3 +12,4 @@ builder = "nixpacks"
 [deploy]
 startCommand = "uvicorn main:app --host 0.0.0.0 --port $PORT"
 restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { apiFetch } from '../api';
 
 const css = `
   @keyframes modalReveal {
@@ -298,21 +299,11 @@ export default function Feature1Form({ token, onClose }) {
         test_type: parseInt(fields.test_type, 10),
       };
 
-      const res = await fetch('http://localhost:8000/feature1', {
-        method:  'POST',
-        headers: {
-          'Content-Type':  'application/json',
-          'Authorization': 'Bearer ' + token,
-        },
-        body: JSON.stringify(payload),
+      const data = await apiFetch('/feature1', {
+        method: 'POST',
+        body:   payload,
+        token,
       });
-
-      if (res.status === 401) throw new Error('Session expired — please log in again.');
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || 'Server error ' + res.status);
-      }
-      const data = await res.json();
       setResult(data);
     } catch (err) {
       setError(err.message);

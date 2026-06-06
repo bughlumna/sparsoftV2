@@ -1,21 +1,23 @@
 """
-Nqwest FastAPI Backend
-======================
-Endpoints:
-  POST /auth/google   — verify Google ID token, return user profile
-  GET  /features      — return feature list  *** requires valid Bearer token ***
-
-Auth flow
+Nqwest FastAPI Backend  v2.0
+============================
+Endpoints
 ---------
-Every protected route uses the `verified_user` FastAPI dependency.
-It reads the `Authorization: Bearer <google-id-token>` header,
-re-verifies it cryptographically with Google, and injects the user
-info into the route handler.  No server-side session is needed —
-Google's public keys do the work on every request.
+  GET  /health        — liveness probe (no auth)
+  POST /auth/google   — verify Google ID token, upsert user, return profile
+  GET  /features      — return this user's entitled features  [auth required]
+  POST /feature1      — run Feature 1 calculation, persist result [auth required]
+  GET  /feature1/history — return past Feature 1 results for this user [auth required]
 
-Run
----
-uvicorn main:app --reload --port 8000
+Auth
+----
+All protected routes use the `verified_user` FastAPI dependency which
+re-verifies the Google ID token on every request (stateless — no sessions).
+
+Database
+--------
+SQLAlchemy async + asyncpg driver.
+Railway injects DATABASE_URL automatically when you link a Postgres plugin.
 """
 
 from __future__ import annotations
@@ -30,7 +32,11 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
+import crud
+from database import Base, engine, get_db
+from models import Feature1Result  # noqa: F401 — referenced via Base.metadata
 from utilities.calculate_type1 import calculateType1
 from utilities.calculate_type2 import calculateType2
 
@@ -43,22 +49,23 @@ GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "")
 if not GOOGLE_CLIENT_ID:
     raise RuntimeError(
         "GOOGLE_CLIENT_ID is not set. "
-        "Add it to backend/.env or your environment variables."
+        "Add it to backend/.env or your Railway environment variables."
     )
 
+_extra_origins = [
+    o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()
+]
 ALLOWED_ORIGINS: list[str] = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    *_extra_origins,
 ]
 
 # ─────────────────────────────────────────────
-#  App
+#  App + middleware
 # ─────────────────────────────────────────────
-app = FastAPI(title="Nqwest API", version="1.2.0")
+app = FastAPI(title="Nqwest API", version="2.0.0")
 
-# IMPORTANT: when allow_credentials=True you MUST list headers explicitly.
-# Using allow_headers=["*"] with credentials causes browsers to reject the
-# preflight response — the Authorization header never reaches the route.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -68,19 +75,27 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-# HTTPBearer extracts the token from "Authorization: Bearer <token>"
-# auto_error=True → returns 403 automatically if header is missing
 bearer_scheme = HTTPBearer(auto_error=True)
 
 
 # ─────────────────────────────────────────────
-#  Shared auth dependency
+#  DB table creation on startup
+# ─────────────────────────────────────────────
+@app.on_event("startup")
+async def create_tables() -> None:
+    """
+    Create all tables if they don't exist yet.
+    Safe to run on every startup — won't touch existing tables.
+    For production migrations use Alembic instead.
+    """
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+
+# ─────────────────────────────────────────────
+#  Auth dependency
 # ─────────────────────────────────────────────
 def _verify_google_token(raw_token: str) -> dict[str, Any]:
-    """
-    Verify a Google ID token and return its decoded claims.
-    Raises HTTP 401 on any failure.
-    """
     try:
         claims: dict[str, Any] = id_token.verify_oauth2_token(
             id_token=raw_token,
@@ -106,43 +121,38 @@ def _verify_google_token(raw_token: str) -> dict[str, Any]:
 def verified_user(
     credentials: Annotated[HTTPAuthorizationCredentials, Security(bearer_scheme)],
 ) -> dict[str, Any]:
-    """
-    FastAPI dependency — inject into any route that requires authentication.
-    Returns the decoded token claims (sub, email, name, picture, …).
-
-    Usage:
-        @app.get("/protected")
-        async def route(user: Annotated[dict, Depends(verified_user)]):
-            ...
-    """
+    """Inject into any route that requires authentication."""
     return _verify_google_token(credentials.credentials)
 
 
 # ─────────────────────────────────────────────
-#  Schemas
+#  Pydantic schemas
 # ─────────────────────────────────────────────
 class GoogleTokenRequest(BaseModel):
     token: str
 
 
 class UserInfo(BaseModel):
-    sub: str
-    name: str
-    email: str
+    sub:            str
+    name:           str
+    email:          str
     email_verified: bool
-    picture: str | None = None
+    picture:        str | None = None
 
 
 class AuthResponse(BaseModel):
     message: str
-    user: UserInfo
+    user:    UserInfo
 
 
 class Feature(BaseModel):
-    id: str
-    name: str
+    id:          str
+    name:        str
     description: str | None = None
 
+
+class FeaturesResponse(BaseModel):
+    features: list[Feature]
 
 
 class Feature1Request(BaseModel):
@@ -151,26 +161,55 @@ class Feature1Request(BaseModel):
     sigma_sqr: float
     mu_0:      float
     mu_1:      float
-    test_type: int   # 1 or 2
+    test_type: int        # 1 or 2
 
 
 class Feature1Response(BaseModel):
-    inputs: Feature1Request
-    result: float
+    inputs:     Feature1Request
+    result:     float
+    saved_id:   int       # DB primary key of the saved result row
 
-class FeaturesResponse(BaseModel):
-    features: list[Feature]
+
+class Feature1HistoryItem(BaseModel):
+    id:         int
+    alpha:      float
+    beta:       float
+    sigma_sqr:  float
+    mu_0:       float
+    mu_1:       float
+    test_type:  int
+    result:     float
+    created_at: str       # ISO-8601 string
+
+    @classmethod
+    def from_orm_row(cls, row: Feature1Result) -> "Feature1HistoryItem":
+        return cls(
+            id=row.id,
+            alpha=row.alpha,
+            beta=row.beta,
+            sigma_sqr=row.sigma_sqr,
+            mu_0=row.mu_0,
+            mu_1=row.mu_1,
+            test_type=row.test_type,
+            result=row.result,
+            created_at=row.created_at.isoformat(),
+        )
+
+
+class Feature1HistoryResponse(BaseModel):
+    history: list[Feature1HistoryItem]
 
 
 # ─────────────────────────────────────────────
-#  Feature registry  (swap for DB query later)
+#  Feature metadata map
+#  (labels and descriptions live here — not in the DB)
 # ─────────────────────────────────────────────
-FEATURES: list[Feature] = [
-    Feature(id="feature_1", name="Feature 1", description="Core module alpha"),
-    Feature(id="feature_2", name="Feature 2", description="Core module beta"),
-    Feature(id="feature_3", name="Feature 3", description="Core module gamma"),
-    Feature(id="feature_4", name="Feature 4", description="Core module delta"),
-]
+FEATURE_META: dict[str, Feature] = {
+    "feature_1": Feature(id="feature_1", name="Feature 1", description="Core module alpha"),
+    "feature_2": Feature(id="feature_2", name="Feature 2", description="Core module beta"),
+    "feature_3": Feature(id="feature_3", name="Feature 3", description="Core module gamma"),
+    "feature_4": Feature(id="feature_4", name="Feature 4", description="Core module delta"),
+}
 
 
 # ─────────────────────────────────────────────
@@ -185,15 +224,23 @@ async def health() -> dict[str, str]:
     "/auth/google",
     response_model=AuthResponse,
     tags=["auth"],
-    summary="Verify a Google ID token and return the user profile",
+    summary="Verify Google ID token, upsert user in DB, return profile",
 )
-async def google_auth(body: GoogleTokenRequest) -> Any:
-    """
-    Login endpoint — called once by the browser after Google sign-in.
-    The frontend stores the raw ID token and sends it as a Bearer
-    header on all subsequent calls.
-    """
+async def google_auth(
+    body: GoogleTokenRequest,
+    db:   Annotated[AsyncSession, Depends(get_db)],
+) -> Any:
     claims = _verify_google_token(body.token)
+
+    # Persist / refresh the user in the database
+    await crud.upsert_user(
+        db,
+        google_sub=claims["sub"],
+        email=claims["email"],
+        name=claims.get("name", ""),
+        picture=claims.get("picture"),
+        email_verified=claims["email_verified"],
+    )
 
     user = UserInfo(
         sub=claims["sub"],
@@ -202,9 +249,6 @@ async def google_auth(body: GoogleTokenRequest) -> Any:
         email_verified=claims["email_verified"],
         picture=claims.get("picture"),
     )
-
-    # TODO: upsert user into your database here
-
     return AuthResponse(message="Authentication successful", user=user)
 
 
@@ -212,41 +256,28 @@ async def google_auth(body: GoogleTokenRequest) -> Any:
     "/features",
     response_model=FeaturesResponse,
     tags=["features"],
-    summary="Return the feature list — requires valid Bearer token",
+    summary="Return this user's entitled features — auth required",
 )
 async def get_features(
-    # ← This single line protects the entire endpoint.
-    # FastAPI verifies the Bearer header and injects the user claims.
-    # Remove it and the route becomes public again.
     current_user: Annotated[dict, Depends(verified_user)],
+    db:           Annotated[AsyncSession, Depends(get_db)],
 ) -> FeaturesResponse:
-    """
-    Returns the dashboard feature buttons.
-    Protected: caller must supply a valid Google ID token in the
-    Authorization header.  A 401 is returned for missing/expired tokens.
+    feature_ids = await crud.get_user_features(db, google_sub=current_user["sub"])
+    features = [FEATURE_META[fid] for fid in feature_ids if fid in FEATURE_META]
+    return FeaturesResponse(features=features)
 
-    `current_user` contains the verified claims — ready for per-user
-    entitlement filtering when you connect a database.
-    """
-    # Future: filter FEATURES by current_user["sub"] from your DB
-    return FeaturesResponse(features=FEATURES)
 
 @app.post(
     "/feature1",
     response_model=Feature1Response,
     tags=["features"],
-    summary="Feature 1 calculation — requires valid Bearer token",
+    summary="Run Feature 1 calculation and persist result — auth required",
 )
 async def feature1(
-    body: Feature1Request,
+    body:         Feature1Request,
     current_user: Annotated[dict, Depends(verified_user)],
+    db:           Annotated[AsyncSession, Depends(get_db)],
 ) -> Feature1Response:
-    """
-    Accepts the Feature 1 form inputs, validates authentication,
-    and returns the inputs echoed back alongside the computed result.
-
-    Dispatches to calculateType1 or calculateType2 based on test_type.
-    """
     kwargs = dict(
         alpha=body.alpha,
         beta=body.beta,
@@ -265,4 +296,32 @@ async def feature1(
             detail=f"test_type must be 1 or 2, got {body.test_type}",
         )
 
-    return Feature1Response(inputs=body, result=result)
+    # Persist the result
+    saved = await crud.save_feature1_result(
+        db,
+        google_sub=current_user["sub"],
+        result=result,
+        **kwargs,
+        test_type=body.test_type,
+    )
+
+    return Feature1Response(inputs=body, result=result, saved_id=saved.id)
+
+
+@app.get(
+    "/feature1/history",
+    response_model=Feature1HistoryResponse,
+    tags=["features"],
+    summary="Return past Feature 1 results for this user — auth required",
+)
+async def feature1_history(
+    current_user: Annotated[dict, Depends(verified_user)],
+    db:           Annotated[AsyncSession, Depends(get_db)],
+    limit: int = 20,
+) -> Feature1HistoryResponse:
+    rows = await crud.get_feature1_history(
+        db, google_sub=current_user["sub"], limit=limit
+    )
+    return Feature1HistoryResponse(
+        history=[Feature1HistoryItem.from_orm_row(r) for r in rows]
+    )

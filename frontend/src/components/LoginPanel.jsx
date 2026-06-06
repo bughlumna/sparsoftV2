@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { GoogleLogin } from '@react-oauth/google';
+import { apiFetch } from '../api';
 
 const keyframes = `
   @keyframes loginReveal {
@@ -143,16 +144,10 @@ export default function LoginPanel({ onLoginSuccess }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('http://localhost:8000/auth/google', {
+      const data = await apiFetch('/auth/google', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: credentialResponse.credential }),
+        body: { token: credentialResponse.credential },
       });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || 'Authentication failed');
-      }
-      const data = await res.json();
       // Pass user profile + raw Google ID token so authenticated
       // API calls can send it as a Bearer token.
       onLoginSuccess(data.user, credentialResponse.credential);

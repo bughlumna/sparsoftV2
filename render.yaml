@@ -1,0 +1,14 @@
+# render.yaml — Render deployment config for the FastAPI backend
+# Commit this file to your repo root and Render will detect it automatically.
+services:
+  - type: web
+    name: nqwest-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GOOGLE_CLIENT_ID
+        sync: false          # set manually in Render dashboard
+      - key: ALLOWED_ORIGINS
+        sync: false          # set to your Vercel URL after deploying frontend
